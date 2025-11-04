@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Biometric Attendance System - Enhanced</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; margin: 20px; background-color: #f4f4f4; }
+        .container { max-width: 900px; margin: auto; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); }
+        h1 { color: #333; }
+        #videoElement { width: 480px; height: 360px; border: 3px solid #007bff; background: #333; margin-bottom: 15px; }
+        .input-group { margin: 20px 0; padding: 10px; border: 1px solid #ccc; border-radius: 5px; }
+        .input-group label { font-weight: bold; margin-right: 10px; }
+        .input-group input { padding: 8px; border: 1px solid #ddd; border-radius: 4px; width: 150px; }
+        .controls button { padding: 12px 25px; margin: 8px; font-size: 16px; font-weight: bold; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.3s; }
+        #status { margin-top: 20px; padding: 15px; border-radius: 5px; background-color: #e9ecef; color: #333; min-height: 40px; }
+        #log-area { margin-top: 30px; text-align: left; border-top: 1px solid #eee; padding-top: 15px; }
+        #log-list { list-style: none; padding: 0; }
+        #log-list li { padding: 5px 0; border-bottom: 1px dashed #ddd; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Software-Only Biometric  Attendance System </h1>
+        
+        <div class="input-group">
+            <label for="userIdInput">User ID:</label>
+            <input type="text" id="userIdInput" placeholder="e.g., 1003" value="1003">
+            <button onclick="startCamera()" style="background-color: #007bff; color: white;">1. Start Camera</button>
+        </div>
+        
+        <video id="videoElement" autoplay></video>
+        <canvas id="canvasElement" style="display: none;"></canvas>
+        
+        <div class="controls">
+            <button onclick="enrollUserFromInput()" style="background-color: #ffc107;">2. Enroll (Save Face)</button>
+            <button onclick="clockIn()" style="background-color: #28a745; color: white;">3. Clock In (Authenticate)</button>
+        </div>
+        
+        <div id="status">Status: Enter User ID and click 'Start Camera'.</div>
+
+        <div id="log-area">
+            <h2>Attendance Log</h2>
+            <ul id="log-list">
+                <li>Logs will appear here after successful Clock-Ins.</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('videoElement');
+        const canvas = document.getElementById('canvasElement');
+        const statusDiv = document.getElementById('status');
+        const logList = document.getElementById('log-list');
+        const userIdInput = document.getElementById('userIdInput');
+        const context = canvas.getContext('2d');
+        const apiUrl = 'http://127.0.0.1:8000'; 
+
+        function updateLog(message, isSuccess = false) {
+            const listItem = document.createElement('li');
+            listItem.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            if (isSuccess) {
+                listItem.style.color = '#155724'; // Dark green
+            }
+            logList.prepend(listItem); // Add to the top
+        }
+
+        function startCamera() {
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ video: true })
+                    .then(function (stream) {
+                        video.srcObject = stream;
+                        statusDiv.textContent = "Status: Camera active. Enter User ID to proceed.";
+                    })
+                    .catch(function (error) {
+                        statusDiv.textContent = "Status: Error accessing camera: " + error;
+                    });
+            }
+        }
+        
+        function captureFrame() {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            return new Promise(resolve => {
+                canvas.toBlob(resolve, 'image/jpeg', 0.9);
+            });
+        }
+        
+        // New function to pull User ID from the input field
+        function enrollUserFromInput() {
+            const userId = userIdInput.value.trim();
+            if (!userId) {
+                statusDiv.textContent = "❌ Please enter a User ID before enrolling.";
+                return;
+            }
+            enrollUser(userId);
+        }
+
+        // --- ENROLLMENT LOGIC (Now accepts User ID from input) ---
+        async function enrollUser(userId) {
+            statusDiv.textContent = `Status: Sending image for enrollment of User ${userId}...`;
+            const imageBlob = await captureFrame();
+            
+            const formData = new FormData();
+            formData.append('user_id', userId);
+            formData.append('image', imageBlob, 'enrollment.jpg');
+
+            try {
+                const response = await fetch(`${apiUrl}/enroll`, {
+                    method: 'POST',
+                    body: formData,
+                });
+                const data = await response.json();
+                statusDiv.textContent = `✅ Status: ${data.message}`;
+                updateLog(`Enrollment attempt for ${userId}. Status: ${data.status}`);
+            } catch (error) {
+                statusDiv.textContent = `❌ Enrollment failed. Server error.`;
+            }
+        }
+
+        // --- CLOCK-IN LOGIC ---
+        async function clockIn() {
+            statusDiv.textContent = "Status: Sending image for authentication...";
+            const imageBlob = await captureFrame();
+            
+            const formData = new FormData();
+            formData.append('image', imageBlob, 'checkin.jpg');
+            
+            // Note: The mock backend currently authenticates against all users, 
+            // so we don't need to send the userId for matching in this basic version.
+
+            try {
+                const response = await fetch(`${apiUrl}/clock-in`, {
+                    method: 'POST',
+                    body: formData,
+                });
+                const data = await response.json();
+
+                // Display Results
+                if (data.status === 'SUCCESS') {
+                    statusDiv.textContent = `✅ ATTENDANCE LOGGED! User ID: ${data.user_id} at ${data.timestamp}.`;
+                    statusDiv.style.color = 'green';
+                    updateLog(`CHECK-IN SUCCESS: User ${data.user_id} at ${data.timestamp}`, true);
+                } else {
+                    statusDiv.textContent = `❌ ACCESS DENIED/NO MATCH. Try again. Time: ${data.timestamp}.`;
+                    statusDiv.style.color = 'red';
+                    updateLog(`CHECK-IN FAILED: No match found.`);
+                }
+            } catch (error) {
+                statusDiv.textContent = `❌ Clock-in failed. Check server status.`;
+            }
+        }
+    </script>
+</body>
+</html>
